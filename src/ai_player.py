@@ -17,9 +17,9 @@ class AIPlayer(Player):
         decision = self.strategy.decide_purchase(self, property)
 
         if decision:
-            print(f"   🤖 {self.name} (ИИ) решил купить '{property.name}'")
+            print(f"   {self.name} (ИИ) решил купить '{property.name}'")
         else:
-            print(f"   🤖 {self.name} (ИИ) решил не покупать '{property.name}'")
+            print(f"   {self.name} (ИИ) решил не покупать '{property.name}'")
 
         return decision
 
