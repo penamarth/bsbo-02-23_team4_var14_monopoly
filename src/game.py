@@ -5,8 +5,15 @@
 
 from typing import Dict, List, Optional
 
+from ai_strategy import (
+    AggressiveAIStrategy,
+    AIPlayer,
+    BalancedAIStrategy,
+    ConservativeAIStrategy,
+)
 from finance import Auction, Bank, TradeManager
 from models import Board, Cell, Dice, Player, PropertyCell
+from observers import ConsoleLoggerObserver, GameEventPublisher, StatisticsObserver
 
 
 class TurnManager:
@@ -174,6 +181,10 @@ class GameSession:
         self.bank: Optional[Bank] = None
         self.turn_manager: Optional[TurnManager] = None
         self.trade_manager: Optional[TradeManager] = None
+        self.event_publisher: Optional[GameEventPublisher] = None
+        self.console_logger: Optional[ConsoleLoggerObserver] = None
+        self.statistics: Optional[StatisticsObserver] = None
+        self.ai_players: Dict[str, AIPlayer] = {}  # Словарь AI-игроков по ID
         self.settings = {}
         self.is_paused = False
         self.current_player_index = 0
@@ -195,8 +206,18 @@ class GameSession:
         # Инициализация доски
         self.board = self._create_board()
 
+        # Инициализация системы наблюдателей
+        self.event_publisher = GameEventPublisher()
+        self.console_logger = ConsoleLoggerObserver()
+        self.statistics = StatisticsObserver()
+
+        # Автоматическая подписка встроенных наблюдателей
+        self.event_publisher.attach(self.console_logger)
+        self.event_publisher.attach(self.statistics)
+
         # Инициализация финансового агрегата
         self.bank = Bank()
+        self.bank.event_publisher = self.event_publisher  # Связываем Bank с издателем
         self.trade_manager = TradeManager(self.bank)
 
         # Инициализация менеджера ходов
@@ -205,8 +226,29 @@ class GameSession:
             self.board, self.bank, dice, self.trade_manager, self
         )
 
+        # Создание AI-игроков со стратегиями
+        self._initialize_ai_players()
+
         self.settings = game_config.get("settings", {})
         print("✓ Игра инициализирована!\n")
+
+    def _initialize_ai_players(self):
+        """Создаёт AI-игроков с начальными стратегиями"""
+        for player in self.players:
+            if player.is_ai:
+                # Назначаем стратегии на основе имени или позиции
+                if "Консервативный" in player.name or player.id == "p2":
+                    strategy = ConservativeAIStrategy()
+                elif "Агрессивный" in player.name or player.id == "p3":
+                    strategy = AggressiveAIStrategy()
+                else:
+                    strategy = BalancedAIStrategy()
+
+                ai_player = AIPlayer(player, strategy)
+                self.ai_players[player.id] = ai_player
+                print(
+                    f"  AI создан: {player.name} со стратегией {strategy.get_strategy_name()}"
+                )
 
     def _create_board(self) -> Board:
         """Создаёт упрощённое игровое поле"""
@@ -294,6 +336,16 @@ class GameSession:
         """Возвращает текущего игрока"""
         return self.players[self.current_player_index]
 
+    def attach_observer(self, observer):
+        """Подписать наблюдателя на игровые события"""
+        if self.event_publisher:
+            self.event_publisher.attach(observer)
+
+    def detach_observer(self, observer):
+        """Отписать наблюдателя от игровых событий"""
+        if self.event_publisher:
+            self.event_publisher.detach(observer)
+
     def play_turn(self):
         """Выполняет один полный ход"""
         if self.is_paused:
@@ -301,6 +353,11 @@ class GameSession:
             return
 
         current_player = self.get_current_player()
+
+        # Управление стратегиями AI перед ходом
+        if current_player.is_ai and current_player.id in self.ai_players:
+            self._manage_ai_strategy(current_player)
+
         self.turn_manager.start_turn(current_player)
 
         if not current_player.in_jail:
@@ -320,3 +377,37 @@ class GameSession:
 
         # Завершение хода
         self.turn_manager.end_turn()
+
+    def _manage_ai_strategy(self, player: Player):
+        """Управляет динамической сменой стратегии AI на основе баланса"""
+        ai_player = self.ai_players.get(player.id)
+        if not ai_player:
+            return
+
+        current_strategy = ai_player.strategy
+
+        # Логика смены стратегии на основе баланса
+        if player.balance < 500 and isinstance(current_strategy, AggressiveAIStrategy):
+            print(f"\n⚠️ {player.name} в финансовых затруднениях!")
+            ai_player.set_strategy(ConservativeAIStrategy())
+        elif player.balance > 2000 and isinstance(
+            current_strategy, ConservativeAIStrategy
+        ):
+            print(f"\n💪 {player.name} имеет большой резерв!")
+            ai_player.set_strategy(AggressiveAIStrategy())
+
+    def demonstrate_strategy_change(self, player_id: str, new_strategy_name: str):
+        """Демонстрирует ручную смену стратегии AI"""
+        if player_id in self.ai_players:
+            ai_player = self.ai_players[player_id]
+
+            if new_strategy_name == "Balanced":
+                new_strategy = BalancedAIStrategy()
+            elif new_strategy_name == "Conservative":
+                new_strategy = ConservativeAIStrategy()
+            elif new_strategy_name == "Aggressive":
+                new_strategy = AggressiveAIStrategy()
+            else:
+                return
+
+            ai_player.set_strategy(new_strategy)
